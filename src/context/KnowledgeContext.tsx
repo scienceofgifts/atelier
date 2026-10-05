@@ -1,14 +1,40 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode, useRef } from 'react';
 import { 
   KnowledgeObject, 
   ConnectionPattern, 
   ObjectType, 
   SynthesisResult,
-  Hypothesis,
-  ExperimentRun 
+  Hypothesis, 
+  ExperimentRun,
+  SourceMedium
 } from '../types/knowledge';
 import { INITIAL_KNOWLEDGE_OBJECTS, INITIAL_PATTERNS } from '../data/seedData';
 import { executeLocalSearch, SearchResultItem } from '../utils/localSearch';
+import {
+  putItemInDb,
+  bulkPutItemsInDb,
+  clearItemsInDb,
+  putPatternInDb,
+  bulkPutPatternsInDb,
+  clearPatternsInDb,
+  migrateFromLocalStorage,
+  generateUUID,
+  normalizeItem
+} from '../services/indexedDb';
+import { useAuth } from './AuthContext';
+import {
+  SyncStatus,
+  checkCloudDataStatus,
+  fetchCloudItems,
+  fetchCloudPatterns,
+  uploadLocalToCloud,
+  syncSingleItem,
+  syncSinglePattern,
+  setupRealtimeListeners,
+  reconcileItems,
+  reconcilePatterns
+} from '../services/syncService';
+import { MigrationScenario } from '../components/common/CloudMigrationModal';
 
 interface KnowledgeContextType {
   items: KnowledgeObject[];
@@ -62,6 +88,17 @@ interface KnowledgeContextType {
   clearResetNotice: () => void;
   exportArchiveJson: () => void;
   importArchiveJson: (json: string) => boolean;
+
+  // Cloud Synchronization & Multi-Device State
+  syncStatus: SyncStatus;
+  syncNow: () => Promise<void>;
+  migrationModalOpen: boolean;
+  migrationScenario: MigrationScenario;
+  cloudItemCount: number;
+  confirmUploadToCloud: () => Promise<void>;
+  confirmDownloadFromCloud: () => Promise<void>;
+  confirmMergeCloudAndLocal: () => Promise<void>;
+  dismissMigration: () => void;
 }
 
 const KnowledgeContext = createContext<KnowledgeContextType | undefined>(undefined);
@@ -77,31 +114,324 @@ interface BackupSnapshot {
 }
 
 export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [items, setItems] = useState<KnowledgeObject[]>(() => {
+  const { user, isConfigured } = useAuth();
+
+  // Store all items including tombstones for IndexedDB persistence and sync
+  const [allItems, setAllItems] = useState<KnowledgeObject[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_ITEMS);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(normalizeItem);
       }
     } catch (e) {
-      console.warn('Error reading from localStorage:', e);
+      console.warn('Error reading initial items from localStorage:', e);
     }
-    return INITIAL_KNOWLEDGE_OBJECTS;
+    return INITIAL_KNOWLEDGE_OBJECTS.map(normalizeItem);
   });
 
-  const [patterns, setPatterns] = useState<ConnectionPattern[]>(() => {
+  // Active items exposed to normal UI views, filters, and searches (hiding tombstones)
+  const items = useMemo(() => allItems.filter(it => !it.isDeleted), [allItems]);
+
+  // Store all patterns
+  const [allPatterns, setAllPatterns] = useState<ConnectionPattern[]>(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY_PATTERNS);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((p: ConnectionPattern) => ({ ...p, isDeleted: p.isDeleted ?? false }));
+        }
       }
     } catch (e) {
       console.warn('Error reading patterns from localStorage:', e);
     }
-    return INITIAL_PATTERNS;
+    return INITIAL_PATTERNS.map(p => ({ ...p, isDeleted: false }));
   });
+
+  const patterns = useMemo(() => allPatterns.filter(p => !p.isDeleted), [allPatterns]);
+
+  // Sync state
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return 'offline';
+    return 'idle';
+  });
+
+  // Migration modal state
+  const [migrationModalOpen, setMigrationModalOpen] = useState<boolean>(false);
+  const [migrationScenario, setMigrationScenario] = useState<MigrationScenario>(null);
+  const [cloudItemCount, setCloudItemCount] = useState<number>(0);
+
+  // Ref to hold latest state for sync reconciliations
+  const allItemsRef = useRef(allItems);
+  allItemsRef.current = allItems;
+  const allPatternsRef = useRef(allPatterns);
+  allPatternsRef.current = allPatterns;
+
+  // On mount, perform safe, automatic migration from localStorage to IndexedDB
+  useEffect(() => {
+    migrateFromLocalStorage()
+      .then(({ items: loadedItems, patterns: loadedPatterns }) => {
+        setAllItems(loadedItems);
+        setAllPatterns(loadedPatterns);
+      })
+      .catch(err => {
+        console.error('Failed to load/migrate IndexedDB:', err);
+      });
+  }, []);
+
+  // Monitor network online/offline status
+  useEffect(() => {
+    const handleOnline = () => {
+      setSyncStatus(user ? 'pending' : 'idle');
+    };
+    const handleOffline = () => {
+      setSyncStatus('offline');
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [user]);
+
+  // Handle Authentication & Initial Cloud Sync / Migration
+  useEffect(() => {
+    if (!isConfigured || !user) {
+      setSyncStatus(typeof navigator !== 'undefined' && !navigator.onLine ? 'offline' : 'idle');
+      return;
+    }
+
+    let isSubscribed = true;
+    let unsubscribeListeners: (() => void) | null = null;
+
+    const initializeCloudSync = async () => {
+      setSyncStatus('syncing');
+
+      try {
+        const { hasCloudData, cloudItemCount: remoteCount } = await checkCloudDataStatus(user.uid);
+        if (!isSubscribed) return;
+
+        setCloudItemCount(remoteCount);
+
+        const currentLocal = allItemsRef.current;
+        const isDefaultSeed = currentLocal.length <= INITIAL_KNOWLEDGE_OBJECTS.length &&
+          currentLocal.every(l => INITIAL_KNOWLEDGE_OBJECTS.some(s => s.id === l.id));
+
+        if (!hasCloudData && currentLocal.length > 0) {
+          // Scenario A: Local items exist, Cloud is empty -> Offer upload
+          setMigrationScenario('upload_local');
+          setMigrationModalOpen(true);
+          setSyncStatus('idle');
+        } else if (hasCloudData && isDefaultSeed) {
+          // Scenario B: Cloud has items, local is just default seed -> Automatically download
+          const remoteItems = await fetchCloudItems(user.uid);
+          const remotePatterns = await fetchCloudPatterns(user.uid);
+
+          if (!isSubscribed) return;
+
+          await clearItemsInDb();
+          await bulkPutItemsInDb(remoteItems);
+          if (remotePatterns.length > 0) {
+            await clearPatternsInDb();
+            await bulkPutPatternsInDb(remotePatterns);
+            setAllPatterns(remotePatterns);
+          }
+          setAllItems(remoteItems);
+          setSyncStatus('synced');
+        } else if (hasCloudData && !isDefaultSeed) {
+          // Scenario C: Both local and cloud have custom data -> Reconcile or prompt
+          setMigrationScenario('merge_conflict');
+          setMigrationModalOpen(true);
+          setSyncStatus('idle');
+        } else {
+          setSyncStatus('synced');
+        }
+
+        // Setup real-time listener for remote changes from other devices
+        unsubscribeListeners = setupRealtimeListeners(user.uid, async (remoteItems, remotePatterns) => {
+          if (!isSubscribed || remoteItems.length === 0) return;
+
+          const localCurrent = allItemsRef.current;
+          const { mergedItems, hasLocalChangesToPush } = reconcileItems(localCurrent, remoteItems);
+
+          // Update local IndexedDB and State
+          await bulkPutItemsInDb(mergedItems);
+          setAllItems(mergedItems);
+
+          if (remotePatterns.length > 0) {
+            const mergedPatterns = reconcilePatterns(allPatternsRef.current, remotePatterns);
+            await bulkPutPatternsInDb(mergedPatterns);
+            setAllPatterns(mergedPatterns);
+          }
+
+          if (hasLocalChangesToPush && user && navigator.onLine) {
+            uploadLocalToCloud(user.uid, mergedItems, allPatternsRef.current).catch(err => {
+              console.warn('[Atelier Sync] Background upload failed:', err);
+            });
+          }
+
+          setSyncStatus('synced');
+        });
+
+      } catch (err) {
+        console.error('[Atelier Sync] Error during initial cloud sync setup:', err);
+        setSyncStatus('error');
+      }
+    };
+
+    initializeCloudSync();
+
+    return () => {
+      isSubscribed = false;
+      if (unsubscribeListeners) {
+        unsubscribeListeners();
+      }
+    };
+  }, [user, isConfigured]);
+
+  // Migration Handlers
+  const confirmUploadToCloud = async () => {
+    if (!user) return;
+    setSyncStatus('syncing');
+    try {
+      // 1. Safety backup snapshot before migration
+      exportArchiveSnapshotLocally();
+
+      // 2. Upload all local items and patterns
+      await uploadLocalToCloud(user.uid, allItemsRef.current, allPatternsRef.current);
+      setSyncStatus('synced');
+      setMigrationModalOpen(false);
+      setMigrationScenario(null);
+    } catch (err) {
+      console.error('[Atelier Sync] Migration upload failed:', err);
+      setSyncStatus('error');
+    }
+  };
+
+  const confirmDownloadFromCloud = async () => {
+    if (!user) return;
+    setSyncStatus('syncing');
+    try {
+      // 1. Safety backup snapshot before overwriting
+      exportArchiveSnapshotLocally();
+
+      // 2. Fetch and replace local
+      const remoteItems = await fetchCloudItems(user.uid);
+      const remotePatterns = await fetchCloudPatterns(user.uid);
+
+      await clearItemsInDb();
+      await bulkPutItemsInDb(remoteItems);
+      setAllItems(remoteItems);
+
+      if (remotePatterns.length > 0) {
+        await clearPatternsInDb();
+        await bulkPutPatternsInDb(remotePatterns);
+        setAllPatterns(remotePatterns);
+      }
+
+      setSyncStatus('synced');
+      setMigrationModalOpen(false);
+      setMigrationScenario(null);
+    } catch (err) {
+      console.error('[Atelier Sync] Migration download failed:', err);
+      setSyncStatus('error');
+    }
+  };
+
+  const confirmMergeCloudAndLocal = async () => {
+    if (!user) return;
+    setSyncStatus('syncing');
+    try {
+      // 1. Safety backup snapshot
+      exportArchiveSnapshotLocally();
+
+      // 2. Fetch remote and reconcile
+      const remoteItems = await fetchCloudItems(user.uid);
+      const remotePatterns = await fetchCloudPatterns(user.uid);
+
+      const { mergedItems } = reconcileItems(allItemsRef.current, remoteItems);
+      const mergedPatterns = reconcilePatterns(allPatternsRef.current, remotePatterns);
+
+      // 3. Save merged result to IndexedDB & upload to cloud
+      await clearItemsInDb();
+      await bulkPutItemsInDb(mergedItems);
+      setAllItems(mergedItems);
+
+      if (mergedPatterns.length > 0) {
+        await clearPatternsInDb();
+        await bulkPutPatternsInDb(mergedPatterns);
+        setAllPatterns(mergedPatterns);
+      }
+
+      await uploadLocalToCloud(user.uid, mergedItems, mergedPatterns);
+
+      setSyncStatus('synced');
+      setMigrationModalOpen(false);
+      setMigrationScenario(null);
+    } catch (err) {
+      console.error('[Atelier Sync] Merge failed:', err);
+      setSyncStatus('error');
+    }
+  };
+
+  const dismissMigration = () => {
+    setMigrationModalOpen(false);
+    setMigrationScenario(null);
+  };
+
+  const exportArchiveSnapshotLocally = () => {
+    try {
+      const backup: BackupSnapshot = {
+        timestamp: new Date().toISOString(),
+        items: [...allItemsRef.current],
+        patterns: [...allPatternsRef.current],
+      };
+      localStorage.setItem(STORAGE_KEY_BACKUP, JSON.stringify(backup));
+      setHasBackupSnapshot(true);
+      setBackupTimestamp(backup.timestamp);
+    } catch (e) {
+      console.warn('Failed to write local backup snapshot:', e);
+    }
+  };
+
+  // Manual Sync Now Trigger
+  const syncNow = async () => {
+    if (!user || !isConfigured) return;
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
+      return;
+    }
+
+    setSyncStatus('syncing');
+    try {
+      const remoteItems = await fetchCloudItems(user.uid);
+      const remotePatterns = await fetchCloudPatterns(user.uid);
+
+      const { mergedItems, hasLocalChangesToPush } = reconcileItems(allItemsRef.current, remoteItems);
+      const mergedPatterns = reconcilePatterns(allPatternsRef.current, remotePatterns);
+
+      await bulkPutItemsInDb(mergedItems);
+      setAllItems(mergedItems);
+
+      if (mergedPatterns.length > 0) {
+        await bulkPutPatternsInDb(mergedPatterns);
+        setAllPatterns(mergedPatterns);
+      }
+
+      if (hasLocalChangesToPush || remoteItems.length === 0) {
+        await uploadLocalToCloud(user.uid, mergedItems, mergedPatterns);
+      }
+
+      setSyncStatus('synced');
+    } catch (err) {
+      console.error('[Atelier Sync] Manual sync failed:', err);
+      setSyncStatus('error');
+    }
+  };
 
   // Automatic backup snapshot state
   const [hasBackupSnapshot, setHasBackupSnapshot] = useState<boolean>(() => {
@@ -134,23 +464,6 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   const [lastSynthesis, setLastSynthesis] = useState<SynthesisResult | null>(null);
   const [isDetectingConnections, setIsDetectingConnections] = useState(false);
 
-  // Sync to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(items));
-    } catch (e) {
-      console.error('Failed to save items to localStorage:', e);
-    }
-  }, [items]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_PATTERNS, JSON.stringify(patterns));
-    } catch (e) {
-      console.error('Failed to save patterns to localStorage:', e);
-    }
-  }, [patterns]);
-
   // Keep activeItem updated if items change
   useEffect(() => {
     if (activeItem) {
@@ -161,7 +474,7 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
   }, [items, activeItem]);
 
-  // Dynamic deterministic local search results over ALL local items
+  // Dynamic deterministic local search results over active items
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
     return executeLocalSearch(items, searchQuery, {
@@ -170,10 +483,11 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
     });
   }, [items, searchQuery, selectedType, selectedTopic]);
 
-  // Dynamic topics with counts
+  // Dynamic topics with counts calculated strictly from active non-deleted items
   const allTopics = useMemo(() => {
     const map = new Map<string, number>();
     for (const it of items) {
+      if (it.isDeleted) continue;
       for (const t of it.topics || []) {
         map.set(t, (map.get(t) || 0) + 1);
       }
@@ -185,7 +499,9 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
 
   const addObject = (data: Partial<KnowledgeObject>): KnowledgeObject => {
     const now = new Date().toISOString();
-    const newId = `obj_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const newId = generateUUID();
+    const canonicalMedium: SourceMedium | undefined = data.medium || data.sourceMedium;
+
     const newObj: KnowledgeObject = {
       id: newId,
       title: data.title || 'Untitled Thought',
@@ -198,7 +514,8 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       confidence: data.confidence,
       sourceId: data.sourceId,
       sourceTitle: data.sourceTitle,
-      sourceMedium: data.sourceMedium,
+      medium: canonicalMedium,
+      sourceMedium: canonicalMedium,
       creator: data.creator,
       year: data.year,
       currentUnderstanding: data.currentUnderstanding,
@@ -210,24 +527,52 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       updatedAt: now,
       revisitCount: 0,
       isStarred: false,
+      isDeleted: false,
     };
 
-    setItems(prev => [newObj, ...prev]);
+    setAllItems(prev => [newObj, ...prev]);
+    putItemInDb(newObj).catch(err => console.error('Failed to put item in IndexedDB:', err));
+
+    // Asynchronously push to cloud if authenticated and online
+    if (user && navigator.onLine) {
+      syncSingleItem(user.uid, newObj).catch(err => {
+        console.warn('[Atelier Sync] Cloud sync warning for new item:', err);
+      });
+    }
+
     return newObj;
   };
 
   const updateObject = (id: string, updates: Partial<KnowledgeObject>) => {
-    setItems(prev =>
+    const now = new Date().toISOString();
+    setAllItems(prev =>
       prev.map(it => {
         if (it.id === id) {
-          const updated = {
+          const canonicalMedium: SourceMedium | undefined = updates.medium !== undefined 
+            ? updates.medium 
+            : (updates.sourceMedium !== undefined ? updates.sourceMedium : it.medium || it.sourceMedium);
+
+          const updated: KnowledgeObject = {
             ...it,
             ...updates,
-            updatedAt: new Date().toISOString(),
+            medium: canonicalMedium,
+            sourceMedium: canonicalMedium,
+            updatedAt: now,
           };
+
+          putItemInDb(updated).catch(err => console.error('Failed to update item in IndexedDB:', err));
+
           if (activeItem?.id === id) {
             setActiveItem(updated);
           }
+
+          // Asynchronously push to cloud if authenticated and online
+          if (user && navigator.onLine) {
+            syncSingleItem(user.uid, updated).catch(err => {
+              console.warn('[Atelier Sync] Cloud sync warning for updated item:', err);
+            });
+          }
+
           return updated;
         }
         return it;
@@ -235,49 +580,103 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
     );
   };
 
+  // Safe deletion via tombstone: marks isDeleted = true, retains record for sync
   const deleteObject = (id: string) => {
-    setItems(prev => prev.filter(it => it.id !== id));
+    const now = new Date().toISOString();
+    setAllItems(prev =>
+      prev.map(it => {
+        if (it.id === id) {
+          const tombstone: KnowledgeObject = {
+            ...it,
+            isDeleted: true,
+            deletedAt: now,
+            updatedAt: now,
+          };
+          putItemInDb(tombstone).catch(err => console.error('Failed to store tombstone in IndexedDB:', err));
+
+          // Asynchronously push tombstone to cloud so other devices receive deletion
+          if (user && navigator.onLine) {
+            syncSingleItem(user.uid, tombstone).catch(err => {
+              console.warn('[Atelier Sync] Cloud sync warning for tombstoned item:', err);
+            });
+          }
+
+          return tombstone;
+        }
+        return it;
+      })
+    );
     if (activeItem?.id === id) {
       setActiveItem(null);
     }
   };
 
   const toggleStar = (id: string) => {
-    setItems(prev =>
-      prev.map(it => (it.id === id ? { ...it, isStarred: !it.isStarred } : it))
+    const now = new Date().toISOString();
+    setAllItems(prev =>
+      prev.map(it => {
+        if (it.id === id) {
+          const updated = { ...it, isStarred: !it.isStarred, updatedAt: now };
+          putItemInDb(updated).catch(err => console.error('Failed to toggle star in IndexedDB:', err));
+
+          if (user && navigator.onLine) {
+            syncSingleItem(user.uid, updated).catch(err => console.warn('Cloud sync error:', err));
+          }
+
+          return updated;
+        }
+        return it;
+      })
     );
   };
 
   const recordRevisit = (id: string) => {
     const now = new Date().toISOString();
-    setItems(prev =>
-      prev.map(it =>
-        it.id === id
-          ? {
-              ...it,
-              revisitCount: (it.revisitCount || 0) + 1,
-              lastRevisitedAt: now,
-            }
-          : it
-      )
+    setAllItems(prev =>
+      prev.map(it => {
+        if (it.id === id) {
+          const updated = {
+            ...it,
+            revisitCount: (it.revisitCount || 0) + 1,
+            lastRevisitedAt: now,
+            updatedAt: now,
+          };
+          putItemInDb(updated).catch(err => console.error('Failed to record revisit in IndexedDB:', err));
+
+          if (user && navigator.onLine) {
+            syncSingleItem(user.uid, updated).catch(err => console.warn('Cloud sync error:', err));
+          }
+
+          return updated;
+        }
+        return it;
+      })
     );
   };
 
   const addHypothesisToQuestion = (questionId: string, hypothesis: Omit<Hypothesis, 'id'>) => {
+    const now = new Date().toISOString();
     const newHyp: Hypothesis = {
       ...hypothesis,
-      id: `hyp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-      lastTestedAt: new Date().toISOString().split('T')[0],
+      id: `hyp_${generateUUID()}`,
+      lastTestedAt: now.split('T')[0],
     };
 
-    setItems(prev =>
+    setAllItems(prev =>
       prev.map(it => {
         if (it.id === questionId && it.type === 'question') {
-          return {
+          const updated = {
             ...it,
             hypotheses: [...(it.hypotheses || []), newHyp],
-            updatedAt: new Date().toISOString(),
+            updatedAt: now,
           };
+          putItemInDb(updated).catch(err => console.error('Failed to add hypothesis in IndexedDB:', err));
+
+          if (user && navigator.onLine) {
+            syncSingleItem(user.uid, updated).catch(err => console.warn('Cloud sync error:', err));
+          }
+
+          return updated;
         }
         return it;
       })
@@ -285,14 +684,22 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   };
 
   const updateHypothesis = (questionId: string, hypothesisId: string, updates: Partial<Hypothesis>) => {
-    setItems(prev =>
+    const now = new Date().toISOString();
+    setAllItems(prev =>
       prev.map(it => {
         if (it.id === questionId && it.type === 'question') {
-          return {
+          const updated = {
             ...it,
             hypotheses: (it.hypotheses || []).map(h => (h.id === hypothesisId ? { ...h, ...updates } : h)),
-            updatedAt: new Date().toISOString(),
+            updatedAt: now,
           };
+          putItemInDb(updated).catch(err => console.error('Failed to update hypothesis in IndexedDB:', err));
+
+          if (user && navigator.onLine) {
+            syncSingleItem(user.uid, updated).catch(err => console.warn('Cloud sync error:', err));
+          }
+
+          return updated;
         }
         return it;
       })
@@ -300,7 +707,8 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   };
 
   const recordExperimentResult = (experimentId: string, resultDetails: Partial<ExperimentRun>) => {
-    setItems(prev =>
+    const now = new Date().toISOString();
+    setAllItems(prev =>
       prev.map(it => {
         if (it.id === experimentId) {
           const updatedDetails: ExperimentRun = {
@@ -309,13 +717,20 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
             observation: resultDetails.observation || it.experimentDetails?.observation || '',
             status: resultDetails.status || 'completed',
             durationDays: resultDetails.durationDays || it.experimentDetails?.durationDays,
-            completedDate: new Date().toISOString().split('T')[0],
+            completedDate: now.split('T')[0],
           };
-          return {
+          const updated = {
             ...it,
             experimentDetails: updatedDetails,
-            updatedAt: new Date().toISOString(),
+            updatedAt: now,
           };
+          putItemInDb(updated).catch(err => console.error('Failed to record experiment in IndexedDB:', err));
+
+          if (user && navigator.onLine) {
+            syncSingleItem(user.uid, updated).catch(err => console.warn('Cloud sync error:', err));
+          }
+
+          return updated;
         }
         return it;
       })
@@ -323,10 +738,23 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   };
 
   const acceptPattern = (patternId: string) => {
-    setPatterns(prev =>
-      prev.map(p => (p.id === patternId ? { ...p, accepted: true, dismissed: false } : p))
+    const now = new Date().toISOString();
+    setAllPatterns(prev =>
+      prev.map(p => {
+        if (p.id === patternId) {
+          const updated = { ...p, accepted: true, dismissed: false, updatedAt: now };
+          putPatternInDb(updated).catch(err => console.error('Failed to accept pattern in IndexedDB:', err));
+
+          if (user && navigator.onLine) {
+            syncSinglePattern(user.uid, updated).catch(err => console.warn('Cloud sync error:', err));
+          }
+
+          return updated;
+        }
+        return p;
+      })
     );
-    const pat = patterns.find(p => p.id === patternId);
+    const pat = allPatterns.find(p => p.id === patternId);
     if (pat) {
       addObject({
         title: pat.title,
@@ -342,8 +770,21 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   };
 
   const dismissPattern = (patternId: string) => {
-    setPatterns(prev =>
-      prev.map(p => (p.id === patternId ? { ...p, dismissed: true, accepted: false } : p))
+    const now = new Date().toISOString();
+    setAllPatterns(prev =>
+      prev.map(p => {
+        if (p.id === patternId) {
+          const updated = { ...p, dismissed: true, accepted: false, updatedAt: now };
+          putPatternInDb(updated).catch(err => console.error('Failed to dismiss pattern in IndexedDB:', err));
+
+          if (user && navigator.onLine) {
+            syncSinglePattern(user.uid, updated).catch(err => console.warn('Cloud sync error:', err));
+          }
+
+          return updated;
+        }
+        return p;
+      })
     );
   };
 
@@ -380,7 +821,7 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
           : `No specific objects selected for "${query}".`,
         whatYouKnow: selectedItems.map(m => m.title),
         supportingEvidence: selectedItems.map(m => ({ text: m.summary || m.content.slice(0, 140), source: m.title, type: m.type })),
-        sources: selectedItems.filter(m => m.type === 'source' || m.sourceTitle).map(m => ({ title: m.sourceTitle || m.title, medium: m.sourceMedium || 'source', relevance: 'Selected from your archive' })),
+        sources: selectedItems.filter(m => m.type === 'source' || m.sourceTitle).map(m => ({ title: m.sourceTitle || m.title, medium: m.sourceMedium || m.medium || 'source', relevance: 'Selected from your archive' })),
         experiments: selectedItems.filter(m => m.experimentDetails).map(m => ({
           protocol: m.experimentDetails!.protocol,
           result: m.experimentDetails!.result,
@@ -410,7 +851,9 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       if (res.ok) {
         const data = await res.json();
         if (data.patterns && Array.isArray(data.patterns)) {
-          setPatterns(data.patterns);
+          const normalized = data.patterns.map((p: any) => ({ ...p, isDeleted: false }));
+          setAllPatterns(normalized);
+          bulkPutPatternsInDb(normalized).catch(err => console.error('Failed to save patterns to IDB:', err));
         }
       }
     } catch (e) {
@@ -449,8 +892,8 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
     try {
       const backup: BackupSnapshot = {
         timestamp: new Date().toISOString(),
-        items: [...items],
-        patterns: [...patterns],
+        items: [...allItems],
+        patterns: [...allPatterns],
       };
       localStorage.setItem(STORAGE_KEY_BACKUP, JSON.stringify(backup));
       setHasBackupSnapshot(true);
@@ -459,9 +902,20 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       console.error('Failed to create automatic pre-reset backup:', e);
     }
 
-    // 2. Load sample datasets
-    setItems(INITIAL_KNOWLEDGE_OBJECTS);
-    setPatterns(INITIAL_PATTERNS);
+    // 2. Load and persist sample datasets in IndexedDB locally (does NOT wipe Firestore cloud!)
+    const sampleItems = INITIAL_KNOWLEDGE_OBJECTS.map(normalizeItem);
+    const samplePatterns = INITIAL_PATTERNS.map(p => ({ ...p, isDeleted: false }));
+
+    clearItemsInDb()
+      .then(() => bulkPutItemsInDb(sampleItems))
+      .catch(err => console.error('Failed to write sample items to IDB:', err));
+
+    clearPatternsInDb()
+      .then(() => bulkPutPatternsInDb(samplePatterns))
+      .catch(err => console.error('Failed to write sample patterns to IDB:', err));
+
+    setAllItems(sampleItems);
+    setAllPatterns(samplePatterns);
     setActiveItem(null);
     setLastSynthesis(null);
     setSearchQuery('');
@@ -474,8 +928,21 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       if (stored) {
         const parsed: BackupSnapshot = JSON.parse(stored);
         if (parsed && Array.isArray(parsed.items)) {
-          setItems(parsed.items);
-          if (Array.isArray(parsed.patterns)) setPatterns(parsed.patterns);
+          const restoredItems = parsed.items.map(normalizeItem);
+          const restoredPatterns = Array.isArray(parsed.patterns)
+            ? parsed.patterns.map(p => ({ ...p, isDeleted: p.isDeleted ?? false }))
+            : INITIAL_PATTERNS.map(p => ({ ...p, isDeleted: false }));
+
+          clearItemsInDb()
+            .then(() => bulkPutItemsInDb(restoredItems))
+            .catch(err => console.error('Failed to restore items in IDB:', err));
+
+          clearPatternsInDb()
+            .then(() => bulkPutPatternsInDb(restoredPatterns))
+            .catch(err => console.error('Failed to restore patterns in IDB:', err));
+
+          setAllItems(restoredItems);
+          setAllPatterns(restoredPatterns);
           setLastResetOccurred(false);
           return true;
         }
@@ -493,8 +960,10 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   const exportArchiveJson = () => {
     const data = {
       exportedAt: new Date().toISOString(),
-      items,
-      patterns,
+      version: 2,
+      storageEngine: 'indexeddb',
+      items: allItems,
+      patterns: allPatterns,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -509,8 +978,29 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
     try {
       const parsed = JSON.parse(jsonString);
       if (parsed && Array.isArray(parsed.items)) {
-        setItems(parsed.items);
-        if (Array.isArray(parsed.patterns)) setPatterns(parsed.patterns);
+        const importedItems = parsed.items.map(normalizeItem);
+        const importedPatterns = Array.isArray(parsed.patterns)
+          ? parsed.patterns.map((p: any) => ({ ...p, isDeleted: p.isDeleted ?? false }))
+          : INITIAL_PATTERNS.map(p => ({ ...p, isDeleted: false }));
+
+        clearItemsInDb()
+          .then(() => bulkPutItemsInDb(importedItems))
+          .catch(err => console.error('Failed to write imported items to IDB:', err));
+
+        clearPatternsInDb()
+          .then(() => bulkPutPatternsInDb(importedPatterns))
+          .catch(err => console.error('Failed to write imported patterns to IDB:', err));
+
+        setAllItems(importedItems);
+        setAllPatterns(importedPatterns);
+
+        // If authenticated, sync imported archive to cloud
+        if (user && navigator.onLine) {
+          uploadLocalToCloud(user.uid, importedItems, importedPatterns).catch(err => {
+            console.warn('[Atelier Sync] Failed to sync imported archive to cloud:', err);
+          });
+        }
+
         return true;
       }
     } catch (err) {
@@ -561,6 +1051,15 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
         clearResetNotice,
         exportArchiveJson,
         importArchiveJson,
+        syncStatus,
+        syncNow,
+        migrationModalOpen,
+        migrationScenario,
+        cloudItemCount,
+        confirmUploadToCloud,
+        confirmDownloadFromCloud,
+        confirmMergeCloudAndLocal,
+        dismissMigration,
       }}
     >
       {children}

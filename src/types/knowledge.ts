@@ -116,6 +116,10 @@ export interface KnowledgeObject {
   lastRevisitedAt?: string;
   revisitCount?: number;
   isStarred?: boolean;
+
+  // Synchronization & Deletion Tombstones
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface SynthesisResult {
@@ -153,6 +157,8 @@ export interface ConnectionPattern {
   suggestedAction: string;
   accepted?: boolean;
   dismissed?: boolean;
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export type ActiveView = 

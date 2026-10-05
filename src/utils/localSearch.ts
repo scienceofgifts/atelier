@@ -335,6 +335,11 @@ export function executeLocalSearch(
   let results: SearchResultItem[] = [];
 
   for (const item of items) {
+    // Never return deleted/tombstoned objects in search results
+    if (item.isDeleted) {
+      continue;
+    }
+
     // Optional filters
     if (options.typeFilter && options.typeFilter !== 'all' && item.type !== options.typeFilter) {
       continue;

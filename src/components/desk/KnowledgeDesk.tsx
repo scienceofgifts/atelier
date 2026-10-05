@@ -39,6 +39,7 @@ export const KnowledgeDesk: React.FC<KnowledgeDeskProps> = ({ onSelectObject, on
   } = useKnowledge();
 
   const [selectedForSynthesis, setSelectedForSynthesis] = useState<KnowledgeObject[]>([]);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const handleToggleSelectForSynthesis = (obj: KnowledgeObject) => {
     if (selectedForSynthesis.some(s => s.id === obj.id)) {
@@ -89,6 +90,7 @@ export const KnowledgeDesk: React.FC<KnowledgeDeskProps> = ({ onSelectObject, on
       <section>
         <div className="relative">
           <input
+            ref={searchInputRef}
             type="text"
             value={searchQuery}
             onChange={e => {
@@ -99,14 +101,24 @@ export const KnowledgeDesk: React.FC<KnowledgeDeskProps> = ({ onSelectObject, on
             className="w-full pl-12 pr-10 py-4 bg-surface hover:bg-surface-subtle focus:bg-surface text-main placeholder:text-faint font-serif text-lg sm:text-xl rounded-xl border border-theme-subtle focus:border-theme-strong focus:outline-hidden shadow-theme-card transition-all"
             autoFocus
           />
-          <Search className="w-5 h-5 text-faint absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <button
+            type="button"
+            onClick={() => searchInputRef.current?.focus()}
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-faint hover:text-main transition-colors cursor-pointer p-0.5"
+            title="Focus search input"
+            aria-label="Search"
+          >
+            <Search className="w-5 h-5" />
+          </button>
           {isSearchActive && (
             <button
               onClick={() => {
                 setSearchQuery('');
                 setSelectedForSynthesis([]);
+                searchInputRef.current?.focus();
               }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted hover:text-main rounded-full"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted hover:text-main rounded-full cursor-pointer"
+              title="Clear search query"
             >
               <X className="w-4 h-4" />
             </button>

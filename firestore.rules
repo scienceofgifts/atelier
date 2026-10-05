@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Explicitly deny root access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // User-scoped data isolation
+    match /users/{userId} {
+      // User profile / metadata
+      allow read, write: if isOwner(userId);
+
+      // Metadata subcollection (e.g. syncInfo)
+      match /meta/{metaId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // Knowledge Objects subcollection
+      match /items/{itemId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.title is string
+          && request.resource.data.type is string
+          && request.resource.data.updatedAt is string;
+        allow delete: if isOwner(userId);
+      }
+
+      // Connection Patterns subcollection
+      match /patterns/{patternId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId)
+          && request.resource.data.id is string
+          && request.resource.data.title is string;
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}

@@ -2,6 +2,7 @@ import React from 'react';
 import { ActiveView } from '../../types/knowledge';
 import { useKnowledge } from '../../context/KnowledgeContext';
 import { ThemeSelector } from './ThemeSelector';
+import { AccountControl } from './AccountControl';
 import { Plus, Search, BookOpen, HelpCircle, Film, Compass, FlaskConical, RotateCcw } from 'lucide-react';
 
 interface NavbarProps {
@@ -10,7 +11,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ currentView, onSelectView }) => {
-  const { setIsCaptureOpen, setSearchQuery, items } = useKnowledge();
+  const { setIsCaptureOpen, setSearchQuery, items, syncStatus, syncNow } = useKnowledge();
 
   const openQuestionsCount = items.filter(i => i.type === 'question').length;
 
@@ -48,10 +49,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onSelectView }) => 
               <button
                 key={link.id}
                 onClick={() => onSelectView(link.id)}
-                className={`relative px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap cursor-pointer ${
+                className={`relative px-3 py-1.5 text-xs font-medium rounded-md border transition-colors whitespace-nowrap cursor-pointer ${
                   isActive
-                    ? 'text-main font-semibold bg-surface-subtle border border-theme-subtle'
-                    : 'text-muted hover:text-main hover:bg-surface-hover'
+                    ? 'text-main bg-surface-subtle border-theme-subtle shadow-theme-card'
+                    : 'text-muted hover:text-main hover:bg-surface-hover border-transparent'
                 }`}
               >
                 <span>{link.label}</span>
@@ -69,11 +70,20 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onSelectView }) => 
         <div className="flex items-center gap-2">
           <button
             onClick={() => onSelectView('desk')}
-            title="Focus search input"
-            className="p-1.5 text-muted hover:text-main hover:bg-surface-hover rounded-md transition-colors"
+            title="Open search in Desk"
+            tabIndex={currentView === 'desk' ? -1 : 0}
+            aria-hidden={currentView === 'desk'}
+            className={`p-1.5 text-muted hover:text-main hover:bg-surface-hover rounded-md transition-colors ${
+              currentView === 'desk'
+                ? 'invisible pointer-events-none'
+                : 'cursor-pointer'
+            }`}
           >
             <Search className="w-4 h-4" />
           </button>
+
+          {/* Account & Sync Control */}
+          <AccountControl syncStatus={syncStatus} onSyncNow={syncNow} />
 
           {/* Unobtrusive Appearance control */}
           <ThemeSelector />
@@ -94,10 +104,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentView, onSelectView }) => 
           <button
             key={link.id}
             onClick={() => onSelectView(link.id)}
-            className={`px-2.5 py-1 text-xs whitespace-nowrap rounded ${
+            className={`px-2.5 py-1 text-xs font-medium whitespace-nowrap rounded border transition-colors ${
               currentView === link.id
-                ? 'bg-surface text-main font-semibold border border-theme-subtle'
-                : 'text-muted hover:text-main'
+                ? 'bg-surface text-main border-theme-subtle shadow-theme-card'
+                : 'text-muted hover:text-main border-transparent'
             }`}
           >
             {link.label}

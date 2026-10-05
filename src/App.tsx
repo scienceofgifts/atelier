@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { KnowledgeProvider, useKnowledge } from './context/KnowledgeContext';
 import { ThemeProvider } from './context/ThemeContext';
+import { AuthProvider } from './context/AuthContext';
 import { ActiveView } from './types/knowledge';
 import { Navbar } from './components/layout/Navbar';
 import { KnowledgeDesk } from './components/desk/KnowledgeDesk';
@@ -14,6 +15,7 @@ import { CaptureModal } from './components/capture/CaptureModal';
 import { SynthesisModal } from './components/synthesis/SynthesisModal';
 import { ObjectDetailModal } from './components/detail/ObjectDetailModal';
 import { ResetSamplesModal } from './components/common/ResetSamplesModal';
+import { CloudMigrationModal } from './components/common/CloudMigrationModal';
 import { Download, Upload, RefreshCw, RotateCcw, Check, X } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -35,7 +37,14 @@ const AppContent: React.FC = () => {
     hasBackupSnapshot,
     backupTimestamp,
     lastResetOccurred,
-    clearResetNotice
+    clearResetNotice,
+    migrationModalOpen,
+    migrationScenario,
+    cloudItemCount,
+    confirmUploadToCloud,
+    confirmDownloadFromCloud,
+    confirmMergeCloudAndLocal,
+    dismissMigration
   } = useKnowledge();
 
   // Keyboard shortcut listener ('c' for capture, 'Escape' to close modals)
@@ -55,12 +64,13 @@ const AppContent: React.FC = () => {
         setLastSynthesis(null);
         setIsCaptureOpen(false);
         setIsResetModalOpen(false);
+        dismissMigration();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setIsCaptureOpen, setActiveItem, setLastSynthesis]);
+  }, [setIsCaptureOpen, setActiveItem, setLastSynthesis, dismissMigration]);
 
   const handleImportClick = () => {
     const input = document.createElement('input');
@@ -109,8 +119,8 @@ const AppContent: React.FC = () => {
             <div className="flex items-center gap-2 text-xs text-main font-sans">
               <Check className="w-4 h-4 text-emerald-500 shrink-0" />
               <div>
-                <span className="font-semibold">Sample data restored.</span>{' '}
-                <span className="text-muted font-serif">An automatic backup of your previous knowledge dataset was saved.</span>
+                <span className="font-semibold">Sample data restored locally.</span>{' '}
+                <span className="text-muted font-serif">Your previous knowledge archive was safely backed up locally. Cloud records remain protected.</span>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -188,6 +198,16 @@ const AppContent: React.FC = () => {
         onConfirm={resetToSampleData}
         itemCount={items.length}
       />
+      <CloudMigrationModal
+        isOpen={migrationModalOpen}
+        scenario={migrationScenario}
+        localCount={items.length}
+        cloudCount={cloudItemCount}
+        onConfirmUpload={confirmUploadToCloud}
+        onConfirmDownload={confirmDownloadFromCloud}
+        onConfirmMerge={confirmMergeCloudAndLocal}
+        onCancel={dismissMigration}
+      />
 
       {/* Quiet Archival Footer */}
       <footer className="border-t border-theme-subtle py-6 bg-surface-subtle mt-auto">
@@ -195,7 +215,7 @@ const AppContent: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="font-serif italic text-main">Atelier External Brain</span>
             <span>·</span>
-            <span>Local & Grounded Intellectual Archive</span>
+            <span>Local-First & Multi-Device Intellectual Archive</span>
           </div>
 
           <div className="flex items-center gap-3 flex-wrap justify-end">
@@ -248,9 +268,11 @@ const AppContent: React.FC = () => {
 export default function App() {
   return (
     <ThemeProvider>
-      <KnowledgeProvider>
-        <AppContent />
-      </KnowledgeProvider>
+      <AuthProvider>
+        <KnowledgeProvider>
+          <AppContent />
+        </KnowledgeProvider>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

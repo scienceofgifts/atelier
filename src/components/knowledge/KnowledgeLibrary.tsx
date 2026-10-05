@@ -20,6 +20,7 @@ export const KnowledgeLibrary: React.FC<KnowledgeLibraryProps> = ({ onSelectObje
 
   const [searchFilter, setSearchFilter] = useState('');
   const [sortBy, setSortBy] = useState<'updated' | 'created' | 'confidence'>('updated');
+  const librarySearchRef = React.useRef<HTMLInputElement>(null);
 
   const types: { id: ObjectType | 'all'; label: string }[] = [
     { id: 'all', label: 'All Knowledge' },
@@ -107,13 +108,22 @@ export const KnowledgeLibrary: React.FC<KnowledgeLibraryProps> = ({ onSelectObje
           {/* Search box */}
           <div className="relative flex-1">
             <input
+              ref={librarySearchRef}
               type="text"
               value={searchFilter}
               onChange={e => setSearchFilter(e.target.value)}
               placeholder="Filter by title, keywords, or observations..."
               className="w-full pl-9 pr-4 py-2 bg-surface text-sm text-main placeholder:text-faint rounded-lg border border-theme-subtle focus:border-theme-strong focus:outline-hidden"
             />
-            <Search className="w-4 h-4 text-faint absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <button
+              type="button"
+              onClick={() => librarySearchRef.current?.focus()}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-faint hover:text-main transition-colors cursor-pointer p-0.5"
+              title="Focus filter input"
+              aria-label="Filter"
+            >
+              <Search className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Topic Select */}
