@@ -40,6 +40,8 @@ const AppContent: React.FC = () => {
     clearResetNotice,
     migrationModalOpen,
     migrationScenario,
+    migrationError,
+    clearMigrationError,
     cloudItemCount,
     confirmUploadToCloud,
     confirmDownloadFromCloud,
@@ -203,10 +205,12 @@ const AppContent: React.FC = () => {
         scenario={migrationScenario}
         localCount={items.length}
         cloudCount={cloudItemCount}
+        error={migrationError}
         onConfirmUpload={confirmUploadToCloud}
         onConfirmDownload={confirmDownloadFromCloud}
         onConfirmMerge={confirmMergeCloudAndLocal}
         onCancel={dismissMigration}
+        onClearError={clearMigrationError}
       />
 
       {/* Quiet Archival Footer */}

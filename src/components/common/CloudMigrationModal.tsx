@@ -6,7 +6,9 @@ import {
   GitMerge, 
   ShieldCheck, 
   X,
-  AlertTriangle 
+  AlertTriangle,
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 
 export type MigrationScenario = 'upload_local' | 'download_cloud' | 'merge_conflict' | null;
@@ -16,10 +18,12 @@ interface CloudMigrationModalProps {
   scenario: MigrationScenario;
   localCount: number;
   cloudCount: number;
-  onConfirmUpload: () => void;
-  onConfirmDownload: () => void;
-  onConfirmMerge: () => void;
+  error?: string | null;
+  onConfirmUpload: () => Promise<void> | void;
+  onConfirmDownload: () => Promise<void> | void;
+  onConfirmMerge: () => Promise<void> | void;
   onCancel: () => void;
+  onClearError?: () => void;
 }
 
 export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
@@ -27,14 +31,28 @@ export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
   scenario,
   localCount,
   cloudCount,
+  error,
   onConfirmUpload,
   onConfirmDownload,
   onConfirmMerge,
   onCancel,
+  onClearError
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
 
   if (!isOpen || !scenario) return null;
+
+  const handleAction = async (action: () => Promise<void> | void) => {
+    setIsProcessing(true);
+    if (onClearError) onClearError();
+    try {
+      await action();
+    } catch (err) {
+      console.error('[CloudMigrationModal] Action error:', err);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-in fade-in duration-200">
@@ -54,8 +72,8 @@ export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
           </div>
           <button
             onClick={onCancel}
-            disabled={isProcessing}
             className="p-1.5 text-muted hover:text-main hover:bg-surface-hover rounded-md transition-colors cursor-pointer"
+            title="Close and stay in local mode"
           >
             <X className="w-5 h-5" />
           </button>
@@ -72,6 +90,19 @@ export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
               </p>
             </div>
           </div>
+
+          {error && (
+            <div className="p-3.5 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-lg text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5 animate-in fade-in duration-150">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-medium">Cloud Synchronization Notice</p>
+                <p className="mt-0.5 opacity-90">{error}</p>
+                <p className="mt-1 text-[11px] text-muted">
+                  Your local knowledge is completely safe in IndexedDB. You can retry or stay in local mode.
+                </p>
+              </div>
+            </div>
+          )}
 
           {scenario === 'upload_local' && (
             <div className="space-y-3 text-sm text-main leading-relaxed">
@@ -115,24 +146,29 @@ export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
           <button
             type="button"
             onClick={onCancel}
-            disabled={isProcessing}
             className="px-3.5 py-1.5 text-xs text-muted hover:text-main rounded-md transition-colors cursor-pointer"
           >
-            Cancel
+            {isProcessing ? 'Cancel Upload' : 'Stay in Local Mode'}
           </button>
 
           {scenario === 'upload_local' && (
             <button
               type="button"
               disabled={isProcessing}
-              onClick={() => {
-                setIsProcessing(true);
-                onConfirmUpload();
-              }}
+              onClick={() => handleAction(onConfirmUpload)}
               className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-accent hover:opacity-90 rounded-md shadow-theme-card transition-colors cursor-pointer disabled:opacity-50"
             >
-              <UploadCloud className="w-3.5 h-3.5" />
-              <span>{isProcessing ? 'Uploading...' : 'Upload Library to Cloud'}</span>
+              {isProcessing ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Uploading to Cloud...</span>
+                </>
+              ) : (
+                <>
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>Upload Library to Cloud</span>
+                </>
+              )}
             </button>
           )}
 
@@ -140,14 +176,20 @@ export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
             <button
               type="button"
               disabled={isProcessing}
-              onClick={() => {
-                setIsProcessing(true);
-                onConfirmDownload();
-              }}
+              onClick={() => handleAction(onConfirmDownload)}
               className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-accent hover:opacity-90 rounded-md shadow-theme-card transition-colors cursor-pointer disabled:opacity-50"
             >
-              <DownloadCloud className="w-3.5 h-3.5" />
-              <span>{isProcessing ? 'Downloading...' : 'Download Cloud Library'}</span>
+              {isProcessing ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Downloading...</span>
+                </>
+              ) : (
+                <>
+                  <DownloadCloud className="w-3.5 h-3.5" />
+                  <span>Download Cloud Library</span>
+                </>
+              )}
             </button>
           )}
 
@@ -156,10 +198,7 @@ export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
               <button
                 type="button"
                 disabled={isProcessing}
-                onClick={() => {
-                  setIsProcessing(true);
-                  onConfirmDownload();
-                }}
+                onClick={() => handleAction(onConfirmDownload)}
                 className="px-3 py-1.5 text-xs font-medium text-main bg-surface hover:bg-surface-hover border border-theme-subtle rounded-md transition-colors cursor-pointer"
               >
                 Keep Cloud Only
@@ -167,10 +206,7 @@ export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
               <button
                 type="button"
                 disabled={isProcessing}
-                onClick={() => {
-                  setIsProcessing(true);
-                  onConfirmUpload();
-                }}
+                onClick={() => handleAction(onConfirmUpload)}
                 className="px-3 py-1.5 text-xs font-medium text-main bg-surface hover:bg-surface-hover border border-theme-subtle rounded-md transition-colors cursor-pointer"
               >
                 Keep Local Only
@@ -178,14 +214,20 @@ export const CloudMigrationModal: React.FC<CloudMigrationModalProps> = ({
               <button
                 type="button"
                 disabled={isProcessing}
-                onClick={() => {
-                  setIsProcessing(true);
-                  onConfirmMerge();
-                }}
+                onClick={() => handleAction(onConfirmMerge)}
                 className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-accent hover:opacity-90 rounded-md shadow-theme-card transition-colors cursor-pointer disabled:opacity-50"
               >
-                <GitMerge className="w-3.5 h-3.5" />
-                <span>{isProcessing ? 'Merging...' : 'Merge Both'}</span>
+                {isProcessing ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Merging...</span>
+                  </>
+                ) : (
+                  <>
+                    <GitMerge className="w-3.5 h-3.5" />
+                    <span>Merge Both</span>
+                  </>
+                )}
               </button>
             </div>
           )}

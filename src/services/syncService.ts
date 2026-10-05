@@ -16,6 +16,26 @@ import { normalizeItem } from './indexedDb';
 export type SyncStatus = 'offline' | 'idle' | 'syncing' | 'synced' | 'pending' | 'error';
 
 /**
+ * Sanitizes an object for Firestore by deeply removing any `undefined` values.
+ * Firestore strictly rejects documents containing `undefined` properties.
+ */
+export function sanitizeForFirestore<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data));
+}
+
+/**
+ * Wraps a promise with a timeout to prevent indefinite hanging.
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 10000, operationName: string = 'Operation'): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${operationName} timed out after ${timeoutMs / 1000}s.`)), timeoutMs)
+    ),
+  ]);
+}
+
+/**
  * Checks if the user's Firestore cloud collection contains any knowledge items.
  */
 export async function checkCloudDataStatus(userId: string): Promise<{ hasCloudData: boolean; cloudItemCount: number }> {
@@ -26,15 +46,15 @@ export async function checkCloudDataStatus(userId: string): Promise<{ hasCloudDa
 
   try {
     const itemsRef = collection(db, 'users', userId, 'items');
-    const snap = await getDocs(query(itemsRef, limit(1)));
+    const snap = await withTimeout(getDocs(query(itemsRef, limit(1))), 8000, 'Check cloud items query');
     if (snap.empty) {
       return { hasCloudData: false, cloudItemCount: 0 };
     }
     // Fetch count
-    const fullSnap = await getDocs(itemsRef);
+    const fullSnap = await withTimeout(getDocs(itemsRef), 8000, 'Fetch cloud items count');
     return { hasCloudData: true, cloudItemCount: fullSnap.size };
-  } catch (error) {
-    console.warn('[Atelier Sync] Error checking cloud data status:', error);
+  } catch (error: any) {
+    console.warn('[Atelier Sync] Error checking cloud data status:', error?.message || error);
     return { hasCloudData: false, cloudItemCount: 0 };
   }
 }
@@ -48,7 +68,7 @@ export async function fetchCloudItems(userId: string): Promise<KnowledgeObject[]
 
   try {
     const itemsRef = collection(db, 'users', userId, 'items');
-    const snap = await getDocs(itemsRef);
+    const snap = await withTimeout(getDocs(itemsRef), 10000, 'Fetch cloud items');
     const items: KnowledgeObject[] = [];
     snap.forEach(docSnap => {
       const data = docSnap.data() as KnowledgeObject;
@@ -70,7 +90,7 @@ export async function fetchCloudPatterns(userId: string): Promise<ConnectionPatt
 
   try {
     const patternsRef = collection(db, 'users', userId, 'patterns');
-    const snap = await getDocs(patternsRef);
+    const snap = await withTimeout(getDocs(patternsRef), 10000, 'Fetch cloud patterns');
     const patterns: ConnectionPattern[] = [];
     snap.forEach(docSnap => {
       patterns.push(docSnap.data() as ConnectionPattern);
@@ -84,7 +104,7 @@ export async function fetchCloudPatterns(userId: string): Promise<ConnectionPatt
 
 /**
  * Uploads a collection of local items and patterns to Firestore using chunked batch writes.
- * Respects Firestore's 500 operations per batch limit.
+ * Respects Firestore's 500 operations per batch limit and sanitizes all undefined fields.
  */
 export async function uploadLocalToCloud(
   userId: string,
@@ -92,7 +112,9 @@ export async function uploadLocalToCloud(
   patterns: ConnectionPattern[]
 ): Promise<void> {
   const db = getDbInstance();
-  if (!isConfigured() || !db || !userId) return;
+  if (!isConfigured() || !db || !userId) {
+    throw new Error('Firebase Firestore is not initialized or user is not authenticated.');
+  }
 
   const CHUNK_SIZE = 400;
 
@@ -103,11 +125,12 @@ export async function uploadLocalToCloud(
 
     for (const item of chunk) {
       const normalized = normalizeItem(item);
+      const sanitized = sanitizeForFirestore(normalized);
       const docRef = doc(db, 'users', userId, 'items', item.id);
-      batch.set(docRef, normalized, { merge: true });
+      batch.set(docRef, sanitized, { merge: true });
     }
 
-    await batch.commit();
+    await withTimeout(batch.commit(), 12000, 'Upload items batch');
   }
 
   // 2. Batch upload patterns
@@ -117,23 +140,28 @@ export async function uploadLocalToCloud(
       const batch = writeBatch(db);
 
       for (const pat of chunk) {
+        const sanitizedPat = sanitizeForFirestore(pat);
         const docRef = doc(db, 'users', userId, 'patterns', pat.id);
-        batch.set(docRef, pat, { merge: true });
+        batch.set(docRef, sanitizedPat, { merge: true });
       }
 
-      await batch.commit();
+      await withTimeout(batch.commit(), 12000, 'Upload patterns batch');
     }
   }
 
   // 3. Set sync metadata
   try {
     const metaRef = doc(db, 'users', userId, 'meta', 'syncInfo');
-    await setDoc(metaRef, {
-      lastSyncedAt: new Date().toISOString(),
-      itemCount: items.length,
-      patternCount: patterns.length,
-      version: 1,
-    }, { merge: true });
+    await withTimeout(
+      setDoc(metaRef, sanitizeForFirestore({
+        lastSyncedAt: new Date().toISOString(),
+        itemCount: items.length,
+        patternCount: patterns.length,
+        version: 1,
+      }), { merge: true }),
+      8000,
+      'Update sync metadata'
+    );
   } catch (err) {
     console.warn('[Atelier Sync] Failed to update syncInfo meta doc:', err);
   }
@@ -148,7 +176,8 @@ export async function syncSingleItem(userId: string, item: KnowledgeObject): Pro
 
   try {
     const docRef = doc(db, 'users', userId, 'items', item.id);
-    await setDoc(docRef, normalizeItem(item), { merge: true });
+    const sanitized = sanitizeForFirestore(normalizeItem(item));
+    await withTimeout(setDoc(docRef, sanitized, { merge: true }), 8000, 'Sync single item');
   } catch (error) {
     console.error(`[Atelier Sync] Failed to sync item ${item.id}:`, error);
     throw error;
@@ -164,7 +193,8 @@ export async function syncSinglePattern(userId: string, pattern: ConnectionPatte
 
   try {
     const docRef = doc(db, 'users', userId, 'patterns', pattern.id);
-    await setDoc(docRef, pattern, { merge: true });
+    const sanitized = sanitizeForFirestore(pattern);
+    await withTimeout(setDoc(docRef, sanitized, { merge: true }), 8000, 'Sync single pattern');
   } catch (error) {
     console.error(`[Atelier Sync] Failed to sync pattern ${pattern.id}:`, error);
     throw error;

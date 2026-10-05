@@ -94,6 +94,8 @@ interface KnowledgeContextType {
   syncNow: () => Promise<void>;
   migrationModalOpen: boolean;
   migrationScenario: MigrationScenario;
+  migrationError: string | null;
+  clearMigrationError: () => void;
   cloudItemCount: number;
   confirmUploadToCloud: () => Promise<void>;
   confirmDownloadFromCloud: () => Promise<void>;
@@ -160,7 +162,10 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   // Migration modal state
   const [migrationModalOpen, setMigrationModalOpen] = useState<boolean>(false);
   const [migrationScenario, setMigrationScenario] = useState<MigrationScenario>(null);
+  const [migrationError, setMigrationError] = useState<string | null>(null);
   const [cloudItemCount, setCloudItemCount] = useState<number>(0);
+
+  const clearMigrationError = () => setMigrationError(null);
 
   // Ref to hold latest state for sync reconciliations
   const allItemsRef = useRef(allItems);
@@ -297,6 +302,7 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   const confirmUploadToCloud = async () => {
     if (!user) return;
     setSyncStatus('syncing');
+    setMigrationError(null);
     try {
       // 1. Safety backup snapshot before migration
       exportArchiveSnapshotLocally();
@@ -306,15 +312,18 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       setSyncStatus('synced');
       setMigrationModalOpen(false);
       setMigrationScenario(null);
-    } catch (err) {
+      setMigrationError(null);
+    } catch (err: any) {
       console.error('[Atelier Sync] Migration upload failed:', err);
       setSyncStatus('error');
+      setMigrationError(err?.message || 'Failed to upload knowledge archive to Firestore cloud.');
     }
   };
 
   const confirmDownloadFromCloud = async () => {
     if (!user) return;
     setSyncStatus('syncing');
+    setMigrationError(null);
     try {
       // 1. Safety backup snapshot before overwriting
       exportArchiveSnapshotLocally();
@@ -336,15 +345,18 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       setSyncStatus('synced');
       setMigrationModalOpen(false);
       setMigrationScenario(null);
-    } catch (err) {
+      setMigrationError(null);
+    } catch (err: any) {
       console.error('[Atelier Sync] Migration download failed:', err);
       setSyncStatus('error');
+      setMigrationError(err?.message || 'Failed to download cloud library.');
     }
   };
 
   const confirmMergeCloudAndLocal = async () => {
     if (!user) return;
     setSyncStatus('syncing');
+    setMigrationError(null);
     try {
       // 1. Safety backup snapshot
       exportArchiveSnapshotLocally();
@@ -372,15 +384,19 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       setSyncStatus('synced');
       setMigrationModalOpen(false);
       setMigrationScenario(null);
-    } catch (err) {
+      setMigrationError(null);
+    } catch (err: any) {
       console.error('[Atelier Sync] Merge failed:', err);
       setSyncStatus('error');
+      setMigrationError(err?.message || 'Failed to merge cloud and local archives.');
     }
   };
 
   const dismissMigration = () => {
     setMigrationModalOpen(false);
     setMigrationScenario(null);
+    setMigrationError(null);
+    setSyncStatus('idle');
   };
 
   const exportArchiveSnapshotLocally = () => {
@@ -1055,6 +1071,8 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
         syncNow,
         migrationModalOpen,
         migrationScenario,
+        migrationError,
+        clearMigrationError,
         cloudItemCount,
         confirmUploadToCloud,
         confirmDownloadFromCloud,
