@@ -14,25 +14,38 @@ export interface FirebaseConfig {
 const STORAGE_KEY_CUSTOM_CONFIG = 'atelier_firebase_custom_config_v1';
 
 /**
- * Retrieves Firebase configuration from Vite environment variables or local storage.
+ * Retrieves Firebase configuration automatically from Vite public build environment variables,
+ * or from local client storage as a developer/local fallback.
  */
 export function getFirebaseConfig(): FirebaseConfig | null {
-  // 1. Check Vite environment variables
+  // 1. Check Vite build-time environment variables
   const envApiKey = import.meta.env.VITE_FIREBASE_API_KEY;
   const envProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+  const envAppId = import.meta.env.VITE_FIREBASE_APP_ID;
 
-  if (envApiKey && envProjectId && envApiKey.trim() !== '') {
+  if (envApiKey && envProjectId && String(envApiKey).trim() !== '' && String(envApiKey).trim() !== '""') {
+    const cleanApiKey = String(envApiKey).trim().replace(/^["']|["']$/g, '');
+    const cleanProjectId = String(envProjectId).trim().replace(/^["']|["']$/g, '');
+    const cleanAppId = envAppId ? String(envAppId).trim().replace(/^["']|["']$/g, '') : '';
+    const cleanAuthDomain = import.meta.env.VITE_FIREBASE_AUTH_DOMAIN
+      ? String(import.meta.env.VITE_FIREBASE_AUTH_DOMAIN).trim().replace(/^["']|["']$/g, '')
+      : `${cleanProjectId}.firebaseapp.com`;
+
     return {
-      apiKey: envApiKey.trim(),
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN?.trim() || `${envProjectId.trim()}.firebaseapp.com`,
-      projectId: envProjectId.trim(),
-      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET?.trim() || `${envProjectId.trim()}.appspot.com`,
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID?.trim() || '',
-      appId: import.meta.env.VITE_FIREBASE_APP_ID?.trim() || '',
+      apiKey: cleanApiKey,
+      authDomain: cleanAuthDomain,
+      projectId: cleanProjectId,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET
+        ? String(import.meta.env.VITE_FIREBASE_STORAGE_BUCKET).trim().replace(/^["']|["']$/g, '')
+        : `${cleanProjectId}.appspot.com`,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID
+        ? String(import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID).trim().replace(/^["']|["']$/g, '')
+        : '',
+      appId: cleanAppId,
     };
   }
 
-  // 2. Check local client storage for runtime configured credentials
+  // 2. Check local client storage for runtime configured credentials (developer/local fallback)
   try {
     const stored = localStorage.getItem(STORAGE_KEY_CUSTOM_CONFIG);
     if (stored) {
@@ -94,7 +107,7 @@ export const googleProvider = googleProviderInstance;
 export const isFirebaseConfigured: boolean = Boolean(authInstance && dbInstance);
 
 /**
- * Saves and re-initializes Firebase with new credentials.
+ * Saves and re-initializes Firebase with custom credentials.
  */
 export function setCustomFirebaseConfig(config: FirebaseConfig): boolean {
   try {

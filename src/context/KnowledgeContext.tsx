@@ -34,6 +34,7 @@ import {
   reconcileItems,
   reconcilePatterns
 } from '../services/syncService';
+import { getApiUrl } from '../services/apiConfig';
 import { MigrationScenario } from '../components/common/CloudMigrationModal';
 
 interface KnowledgeContextType {
@@ -815,7 +816,7 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   const synthesizeSelectedItems = async (query: string, selectedItems: KnowledgeObject[]): Promise<SynthesisResult> => {
     setIsSynthesizing(true);
     try {
-      const response = await fetch('/api/synthesize', {
+      const response = await fetch(getApiUrl('/api/synthesize'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query, items: selectedItems }),
@@ -866,7 +867,7 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
   const detectConnections = async () => {
     setIsDetectingConnections(true);
     try {
-      const res = await fetch('/api/detect-connections', {
+      const res = await fetch(getApiUrl('/api/detect-connections'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items }),
@@ -895,7 +896,7 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
         )
       ).slice(0, 15);
 
-      const res = await fetch('/api/ai-action', {
+      const res = await fetch(getApiUrl('/api/ai-action'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, object, relevantItems }),

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { SynthesisResult, KnowledgeObject } from '../../types/knowledge';
 import { useKnowledge } from '../../context/KnowledgeContext';
 import { X, Copy, Check, BookmarkPlus, ArrowRight } from 'lucide-react';
+import { MarkdownRenderer } from '../common/MarkdownRenderer';
 
 interface SynthesisModalProps {
   synthesis: SynthesisResult | null;
@@ -95,9 +96,9 @@ ${synthesis.openQuestions.map(q => `- ${q}`).join('\n')}
             <h3 className="text-xs uppercase tracking-widest text-muted font-semibold">
               Current Synthesis
             </h3>
-            <p className="font-serif text-lg text-main italic leading-relaxed">
-              {synthesis.summary}
-            </p>
+            <div className="font-serif text-lg text-main italic leading-relaxed">
+              <MarkdownRenderer content={synthesis.summary} />
+            </div>
           </div>
 
           {/* What You Currently Know */}

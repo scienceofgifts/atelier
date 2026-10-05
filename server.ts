@@ -11,19 +11,33 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-// Helper to get Gemini client safely
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+// Helper to get Gemini client safely across Node.js and Cloudflare Workers
+function getGeminiClient(req?: Request): GoogleGenAI | null {
+  const apiKey = 
+    process.env.GEMINI_API_KEY || 
+    (req as any)?.env?.GEMINI_API_KEY || 
+    (globalThis as any).GEMINI_API_KEY || 
+    (globalThis as any).env?.GEMINI_API_KEY;
+
+  if (!apiKey || apiKey === 'MY_GEMINI_API_KEY' || String(apiKey).trim() === '') {
     return null;
   }
   try {
-    return new GoogleGenAI({ apiKey });
+    return new GoogleGenAI({ apiKey: String(apiKey).trim() });
   } catch (err) {
     console.error('Failed to initialize GoogleGenAI client:', err);
     return null;
   }
 }
+
+// Health Endpoint
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'atelier-local',
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // 1. Synthesize Knowledge Route
 app.post('/api/synthesize', async (req: Request, res: Response) => {
@@ -33,7 +47,7 @@ app.post('/api/synthesize', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Query is required' });
     }
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(req);
     const libraryContext = Array.isArray(items)
       ? items.slice(0, 40).map((it: any) => ({
           id: it.id,
@@ -175,7 +189,7 @@ app.post('/api/suggest-capture', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Text is required' });
     }
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(req);
     if (ai) {
       const prompt = `Analyze this raw captured thought from a researcher/writer:
 "${text}"
@@ -285,7 +299,7 @@ Return pure JSON with format:
 app.post('/api/detect-connections', async (req: Request, res: Response) => {
   try {
     const { items = [] } = req.body;
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(req);
 
     if (ai && items.length >= 2) {
       const summaryItems = items.slice(0, 30).map((it: any) => ({
@@ -367,7 +381,7 @@ app.post('/api/ai-action', async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Action and object are required' });
     }
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(req);
     if (ai) {
       let prompt = '';
       if (action === 'challenge') {

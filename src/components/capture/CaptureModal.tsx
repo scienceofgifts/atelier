@@ -3,6 +3,7 @@ import { useKnowledge } from '../../context/KnowledgeContext';
 import { ObjectType, ProvenanceType, ConfidenceLevel } from '../../types/knowledge';
 import { X, Plus, Check, Link2 } from 'lucide-react';
 import { AiIndicator } from '../common/AiIndicator';
+import { getApiUrl } from '../../services/apiConfig';
 
 export const CaptureModal: React.FC = () => {
   const { isCaptureOpen, setIsCaptureOpen, addObject, items, allTopics } = useKnowledge();
@@ -42,7 +43,7 @@ export const CaptureModal: React.FC = () => {
     if (!rawText.trim()) return;
     setIsAnalyzing(true);
     try {
-      const res = await fetch('/api/suggest-capture', {
+      const res = await fetch(getApiUrl('/api/suggest-capture'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

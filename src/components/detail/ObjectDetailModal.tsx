@@ -32,6 +32,7 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { AiIndicator } from '../common/AiIndicator';
+import { MarkdownRenderer } from '../common/MarkdownRenderer';
 
 interface ObjectDetailModalProps {
   object: KnowledgeObject | null;
@@ -482,9 +483,13 @@ export const ObjectDetailModal: React.FC<ObjectDetailModalProps> = ({ object, on
                     onChange={e => setEditedUnderstanding(e.target.value)}
                     className="w-full h-24 p-2 bg-surface text-main text-sm border border-theme-subtle rounded font-serif"
                   />
+                ) : object.currentUnderstanding ? (
+                  <div className="font-serif text-base text-main leading-relaxed">
+                    <MarkdownRenderer content={object.currentUnderstanding} />
+                  </div>
                 ) : (
-                  <p className="font-serif text-lg text-main leading-relaxed italic">
-                    {object.currentUnderstanding || 'No synthesized understanding formulated yet. Test hypotheses below to update.'}
+                  <p className="font-serif text-lg text-muted leading-relaxed italic">
+                    No synthesized understanding formulated yet. Test hypotheses below to update.
                   </p>
                 )}
 
@@ -913,13 +918,13 @@ export const ObjectDetailModal: React.FC<ObjectDetailModalProps> = ({ object, on
             </div>
 
             {aiAnalysisResult && (
-              <div className="p-4 bg-surface-subtle rounded-lg border border-theme-subtle text-main text-sm space-y-2 animate-in fade-in duration-150 shadow-theme-card">
-                <div className="flex items-center justify-between border-b border-theme-subtle pb-1 text-xs font-mono text-muted">
-                  <span>AI Reasoning Feedback</span>
-                  <button onClick={() => setAiAnalysisResult(null)} className="hover:text-main">×</button>
+              <div className="p-4 bg-surface-subtle rounded-lg border border-theme-subtle text-main text-sm space-y-3 animate-in fade-in duration-150 shadow-theme-card">
+                <div className="flex items-center justify-between border-b border-theme-subtle pb-1.5 text-xs font-mono text-muted">
+                  <span className="font-semibold uppercase tracking-wider">AI Reasoning Feedback</span>
+                  <button onClick={() => setAiAnalysisResult(null)} className="hover:text-main text-base leading-none px-1">×</button>
                 </div>
-                <div className="whitespace-pre-wrap font-serif leading-relaxed text-main text-sm">
-                  {aiAnalysisResult}
+                <div className="text-main">
+                  <MarkdownRenderer content={aiAnalysisResult} />
                 </div>
               </div>
             )}

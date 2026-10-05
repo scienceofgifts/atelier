@@ -1,0 +1,14 @@
+{
+  "name": "atelier-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240923.0",
+    "typescript": "^5.5.4",
+    "wrangler": "^3.78.0"
+  }
+}
