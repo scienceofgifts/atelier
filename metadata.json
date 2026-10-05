@@ -1,0 +1,6 @@
+{
+  "name": "Atelier — Visual External Brain",
+  "description": "A quiet, editorial personal knowledge workspace for curious thinkers, writers, and researchers. Capture frictionlessly, connect ideas across sources, explore open questions, and synthesize understanding.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

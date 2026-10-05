@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Newsreader", Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Centralized Design Token System */
+:root, [data-theme="editorial"] {
+  --bg-app: #FAF8F5;
+  --bg-surface: #FFFFFF;
+  --bg-surface-subtle: #F5F2EC;
+  --bg-surface-hover: #F8F5EE;
+  --bg-surface-active: #EFEBE4;
+  --text-main: #1C1917;
+  --text-muted: #57534E;
+  --text-faint: #A8A29E;
+  --border-subtle: rgba(28, 25, 23, 0.12);
+  --border-strong: rgba(28, 25, 23, 0.28);
+  --accent: #292524;
+  --accent-subtle: rgba(41, 37, 36, 0.08);
+  --accent-contrast: #FFFFFF;
+  --shadow-card: 0 4px 20px -2px rgba(28, 25, 23, 0.05);
+  --shadow-modal: 0 16px 40px -8px rgba(28, 25, 23, 0.15);
+}
+
+[data-theme="cloud"] {
+  --bg-app: #F3F6F8;
+  --bg-surface: #FFFFFF;
+  --bg-surface-subtle: #F8FAFB;
+  --bg-surface-hover: #F1F5F8;
+  --bg-surface-active: #E4ECF0;
+  --text-main: #20262B;
+  --text-muted: #68737B;
+  --text-faint: #9CA3AF;
+  --border-subtle: rgba(32, 38, 43, 0.11);
+  --border-strong: rgba(32, 38, 43, 0.25);
+  --accent: #2563EB;
+  --accent-subtle: rgba(37, 99, 235, 0.08);
+  --accent-contrast: #FFFFFF;
+  --shadow-card: 0 4px 18px -2px rgba(32, 38, 43, 0.05);
+  --shadow-modal: 0 16px 40px -8px rgba(32, 38, 43, 0.14);
+}
+
+[data-theme="library"] {
+  --bg-app: #F6F2EA;
+  --bg-surface: #FCFAF6;
+  --bg-surface-subtle: #EFE9DE;
+  --bg-surface-hover: #F4EFE3;
+  --bg-surface-active: #E6DEC8;
+  --text-main: #231F1D;
+  --text-muted: #6E635A;
+  --text-faint: #A5988D;
+  --border-subtle: rgba(35, 31, 29, 0.12);
+  --border-strong: rgba(35, 31, 29, 0.28);
+  --accent: #78350F;
+  --accent-subtle: rgba(120, 53, 15, 0.08);
+  --accent-contrast: #FFFFFF;
+  --shadow-card: 0 4px 20px -2px rgba(35, 31, 29, 0.06);
+  --shadow-modal: 0 16px 40px -8px rgba(35, 31, 29, 0.18);
+}
+
+[data-theme="mist"] {
+  --bg-app: #F1F5F7;
+  --bg-surface: #FFFFFF;
+  --bg-surface-subtle: #F8FAFC;
+  --bg-surface-hover: #EBF1F5;
+  --bg-surface-active: #DDE5EC;
+  --text-main: #1E293B;
+  --text-muted: #64748B;
+  --text-faint: #94A3B8;
+  --border-subtle: rgba(30, 41, 59, 0.10);
+  --border-strong: rgba(30, 41, 59, 0.22);
+  --accent: #0D9488;
+  --accent-subtle: rgba(13, 148, 136, 0.08);
+  --accent-contrast: #FFFFFF;
+  --shadow-card: 0 4px 18px -2px rgba(30, 41, 59, 0.05);
+  --shadow-modal: 0 16px 40px -8px rgba(30, 41, 59, 0.14);
+}
+
+[data-theme="midnight"] {
+  --bg-app: #141820;
+  --bg-surface: #1C222D;
+  --bg-surface-subtle: #252D3C;
+  --bg-surface-hover: #212937;
+  --bg-surface-active: #2E3747;
+  --text-main: #E2E8F0;
+  --text-muted: #94A3B8;
+  --text-faint: #64748B;
+  --border-subtle: rgba(226, 232, 240, 0.12);
+  --border-strong: rgba(226, 232, 240, 0.28);
+  --accent: #38BDF8;
+  --accent-subtle: rgba(56, 189, 248, 0.12);
+  --accent-contrast: #0F172A;
+  --shadow-card: 0 4px 20px -2px rgba(0, 0, 0, 0.40);
+  --shadow-modal: 0 20px 48px -8px rgba(0, 0, 0, 0.65);
+}
+
+/* Base styles using variables */
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--bg-app);
+    color: var(--text-main);
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  h1, h2, h3, .font-serif-display {
+    font-family: var(--font-serif);
+  }
+}
+
+/* Custom theme utility classes */
+.bg-app { background-color: var(--bg-app); }
+.bg-surface { background-color: var(--bg-surface); }
+.bg-surface-subtle { background-color: var(--bg-surface-subtle); }
+.bg-surface-hover { background-color: var(--bg-surface-hover); }
+.bg-surface-active { background-color: var(--bg-surface-active); }
+
+.text-main { color: var(--text-main); }
+.text-muted { color: var(--text-muted); }
+.text-faint { color: var(--text-faint); }
+
+.border-theme-subtle { border-color: var(--border-subtle); }
+.border-theme-strong { border-color: var(--border-strong); }
+
+.shadow-theme-card { box-shadow: var(--shadow-card); }
+.shadow-theme-modal { box-shadow: var(--shadow-modal); }
+
+.bg-accent { background-color: var(--accent); }
+.bg-accent-subtle { background-color: var(--accent-subtle); }
+.text-accent { color: var(--accent); }
+.text-accent-contrast { color: var(--accent-contrast); }
+
+/* Focus ring using theme border-strong */
+*:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}
