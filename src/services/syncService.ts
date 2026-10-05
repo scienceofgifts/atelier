@@ -38,7 +38,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 10000, operatio
 /**
  * Checks if the user's Firestore cloud collection contains any knowledge items.
  */
-export async function checkCloudDataStatus(userId: string): Promise<{ hasCloudData: boolean; cloudItemCount: number }> {
+export async function checkCloudDataStatus(userId: string): Promise<{ hasCloudData: boolean; cloudItemCount: number; error?: string }> {
   const db = getDbInstance();
   if (!isConfigured() || !db || !userId) {
     return { hasCloudData: false, cloudItemCount: 0 };
@@ -55,7 +55,7 @@ export async function checkCloudDataStatus(userId: string): Promise<{ hasCloudDa
     return { hasCloudData: true, cloudItemCount: fullSnap.size };
   } catch (error: any) {
     console.warn('[Atelier Sync] Error checking cloud data status:', error?.message || error);
-    return { hasCloudData: false, cloudItemCount: 0 };
+    return { hasCloudData: false, cloudItemCount: 0, error: error?.message || String(error) };
   }
 }
 

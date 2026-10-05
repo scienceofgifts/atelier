@@ -2,7 +2,7 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
+    // Helper functions for authentication and user-scoped data isolation
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -11,14 +11,9 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Explicitly deny root access
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // User-scoped data isolation
+    // Explicitly restrict access to user-scoped boundaries
     match /users/{userId} {
-      // User profile / metadata
+      // User document & account meta
       allow read, write: if isOwner(userId);
 
       // Metadata subcollection (e.g. syncInfo)
@@ -28,22 +23,12 @@ service cloud.firestore {
 
       // Knowledge Objects subcollection
       match /items/{itemId} {
-        allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId)
-          && request.resource.data.id is string
-          && request.resource.data.title is string
-          && request.resource.data.type is string
-          && request.resource.data.updatedAt is string;
-        allow delete: if isOwner(userId);
+        allow read, write: if isOwner(userId);
       }
 
       // Connection Patterns subcollection
       match /patterns/{patternId} {
-        allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId)
-          && request.resource.data.id is string
-          && request.resource.data.title is string;
-        allow delete: if isOwner(userId);
+        allow read, write: if isOwner(userId);
       }
     }
   }

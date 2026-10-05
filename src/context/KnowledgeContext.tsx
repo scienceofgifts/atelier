@@ -217,8 +217,15 @@ export const KnowledgeProvider: React.FC<{ children: ReactNode }> = ({ children 
       setSyncStatus('syncing');
 
       try {
-        const { hasCloudData, cloudItemCount: remoteCount } = await checkCloudDataStatus(user.uid);
+        const { hasCloudData, cloudItemCount: remoteCount, error } = await checkCloudDataStatus(user.uid);
         if (!isSubscribed) return;
+
+        if (error) {
+          console.warn('[Atelier Sync] Cloud check failed:', error);
+          setSyncStatus('error');
+          setMigrationError(error);
+          return;
+        }
 
         setCloudItemCount(remoteCount);
 
